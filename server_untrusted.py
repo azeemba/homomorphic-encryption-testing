@@ -60,7 +60,7 @@ def handle_detect_edge():
     pixels = body["pixels"]
     size = body["size"]
     if body["encrypted"]:
-        return "Not implemented yet", 500
+        return {"pixels": pixels}
     else:
         im = sobel_edge_detect_parallel(pixels, (size, size))
         return {"pixels": im}
