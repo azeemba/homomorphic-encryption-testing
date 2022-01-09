@@ -49,7 +49,7 @@ def sobel_edge_detect_parallel(im: list[int], size: Tuple[int, int]) -> list[int
 
 def sobel_encrypted_edge_detect(
     enc_context: str, enc_public: str, pixels: list[str], size: int
-) -> list[str]:
+):
     enc = Pyfhel()
     enc.from_bytes_context(base64.b64decode(enc_context))
     enc.from_bytes_publicKey(base64.b64decode(enc_public))
@@ -71,12 +71,11 @@ def sobel_encrypted_edge_detect(
 
     zero = enc.encryptFrac(0)
     zero_out = cipher_to_str(zero)
-    edged = []
     for i in range(len(results)):
         y = i % W
         x = i // W
         if x in [0, W - 1] or y in [0, W - 1]:
-            edged.append([zero_out, zero_out])
+            yield f"{zero_out} {zero_out}\n"
             continue
 
         # Order:
@@ -104,9 +103,7 @@ def sobel_encrypted_edge_detect(
             - results[i - W + 1]
         )
 
-        edged.append([cipher_to_str(valx), cipher_to_str(valy)])
-
-    return edged
+        yield f"{cipher_to_str(valx)} {cipher_to_str(valy)}\n"
 
 
 @app.route("/detect_edge", methods=["POST"])
@@ -123,13 +120,14 @@ def handle_detect_edge():
 
     start_perf = perf_counter()
     if body["encrypted"]:
-        im = sobel_encrypted_edge_detect(
+        res = sobel_encrypted_edge_detect(
             body["context"], body["public_key"], pixels, size
         )
+        return app.response_class(res, mimetype="text/plain")
     else:
         im = sobel_edge_detect_parallel(pixels, (size, size))
-    print(f"Processing: {perf_counter() - start_perf} seconds")
-    return {"pixels": im}
+        print(f"Processing: {perf_counter() - start_perf} seconds")
+        return {"pixels": im}
 
 
 app.run()

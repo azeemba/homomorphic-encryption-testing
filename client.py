@@ -1,6 +1,7 @@
 import base64
-from functools import partial, wraps
+import gc
 import math
+from functools import partial, wraps
 from multiprocessing import Pool
 from time import perf_counter
 
@@ -22,7 +23,7 @@ def time_me(f):
 
 
 def load_image() -> Image:
-    fname = "astro_64.png"
+    fname = "astro_256.png"
     im = Image.open(fname).convert("L")  # L is black and white
     return im
 
@@ -46,7 +47,7 @@ def encrypt_integer_chunk(pub_key, pub_context, pixels, chunksize, start) -> lis
 
 @time_me
 def encrypt_image(enc: Pyfhel, im: Image) -> list[str]:
-    imdata: list[float] = [x/255.0 for x in im.getdata()]
+    imdata: list[float] = [x / 255.0 for x in im.getdata()]
     manual_chunk = 128
     length = len(imdata)
     with Pool() as p:
@@ -67,55 +68,10 @@ def encrypt_image(enc: Pyfhel, im: Image) -> list[str]:
     return pixels
 
 
-def decrypt_integer_chunk(
-    pub_key, pub_context, priv_key, pixels, chunksize, start
-) -> list[int]:
-    # print("In decrypt_integer ", len(pub_key), len(pub_context), len(priv_key))
-    enc = Pyfhel()
-    enc.from_bytes_context(pub_context)
-    enc.from_bytes_publicKey(pub_key)
-    enc.from_bytes_secretKey(priv_key)
-    # print("Constructed Pyfhel object")
-
-    def help(i) -> int:
-        decoded_px = PyCtxt()
-        decoded_px.from_bytes(pixels[i][0], "float")
-        decrypted_x = enc.decryptFrac(decoded_px)
-        decoded_px.from_bytes(pixels[i][1], "float")
-        decrypted_y = enc.decryptFrac(decoded_px)
-        result = math.sqrt(decrypted_y*decrypted_y + decrypted_x*decrypted_x)
-        return min(int(result*255), 255)
-
-    result = list(map(help, range(start, start + chunksize)))
-    return result
-
-
-@time_me
-def decrypt_image(enc: Pyfhel, encrypted_pixels) -> list[int]:
-    length = len(encrypted_pixels)
-    manual_chunk = 128
-    with Pool() as p:
-        pixel_chunks = p.map(
-            partial(
-                decrypt_integer_chunk,
-                enc.to_bytes_publicKey(),
-                enc.to_bytes_context(),
-                enc.to_bytes_secretKey(),
-                encrypted_pixels,
-                manual_chunk,
-            ),
-            range(0, length, manual_chunk),
-        )
-    pixels: list[int] = []
-    for chunk in pixel_chunks:
-        pixels += chunk
-
-    return pixels
-
-
-def send_encrypted_request(enc: Pyfhel, im: Image) -> requests.Response:
+def send_encrypted_request(enc: Pyfhel, im: Image):
     pub_bytes: bytes = enc.to_bytes_publicKey()
     pub_context: bytes = enc.to_bytes_context()
+    print("Starting to encrypt file")
     req = {
         "encrypted": True,
         "size": im.size[0],
@@ -123,9 +79,27 @@ def send_encrypted_request(enc: Pyfhel, im: Image) -> requests.Response:
         "public_key": base64.b64encode(pub_bytes).decode("ascii"),
         "context": base64.b64encode(pub_context).decode("ascii"),
     }
-    resp = requests.post("http://localhost:5000/detect_edge", json=req)
-    resp.raise_for_status()
-    return resp
+
+    def handle_encrypted_val(encrypted):
+        x = base64.b64decode(encrypted)
+        decoded_px = PyCtxt()
+        decoded_px.from_bytes(x, "float")
+        return enc.decryptFrac(decoded_px)
+
+    out_pix = []
+    with requests.post(
+        "http://localhost:5000/detect_edge", json=req, stream=True
+    ) as response:
+        req = None
+        gc.collect()
+        for line in response.iter_lines(chunk_size=128000):
+            elements = line.decode("utf-8").split(" ")
+            decrypted_x = handle_encrypted_val(elements[0])
+            decrypted_y = handle_encrypted_val(elements[1])
+            result = math.sqrt(decrypted_y * decrypted_y + decrypted_x * decrypted_x)
+            out_pix.append(min(int(result * 255), 255))
+
+    return out_pix
 
 
 def send_edge_detect_request(im: Image) -> requests.Response:
@@ -159,12 +133,8 @@ def try_encrypted_edge_detection(im: Image):
     enc = Pyfhel()
     enc.contextGen(65537)
     enc.keyGen()
-    response = send_encrypted_request(enc, im)
-    body = response.json()
-    pixel_bytes = list(map(lambda px: (base64.b64decode(px[0]), base64.b64decode(px[1])), body["pixels"]))
-
-    plaintext = decrypt_image(enc, pixel_bytes)
-    save_result_image(im.size, plaintext)
+    out_pix = send_encrypted_request(enc, im)
+    save_result_image(im.size, out_pix)
 
 
 def main():
