@@ -1,5 +1,6 @@
 import base64
 from functools import partial, wraps
+import math
 from multiprocessing import Pool
 from time import perf_counter
 
@@ -27,11 +28,11 @@ def load_image() -> Image:
 
 
 def encrypt_integer_chunk(pub_key, pub_context, pixels, chunksize, start) -> list[str]:
-    print("In Encrypt_integer ", len(pub_key), len(pub_context))
+    # print("In Encrypt_integer ", len(pub_key), len(pub_context))
     enc = Pyfhel()
     enc.from_bytes_context(pub_context)
     enc.from_bytes_publicKey(pub_key)
-    print("Constructed Pyfhel object")
+    # print("Constructed Pyfhel object")
 
     def help(i) -> str:
         px = pixels[i]
@@ -39,7 +40,7 @@ def encrypt_integer_chunk(pub_key, pub_context, pixels, chunksize, start) -> lis
         return base64.b64encode(encrypted_px).decode("ascii")
 
     result = list(map(help, range(start, start + chunksize)))
-    print("Out Encrypt_integer", len(pub_key), len(pub_context))
+    # print("Out Encrypt_integer", len(pub_key), len(pub_context))
     return result
 
 
@@ -68,29 +69,31 @@ def encrypt_image(enc: Pyfhel, im: Image) -> list[str]:
 
 def decrypt_integer_chunk(
     pub_key, pub_context, priv_key, pixels, chunksize, start
-) -> list[str]:
-    print("In decrypt_integer ", len(pub_key), len(pub_context), len(priv_key))
+) -> list[int]:
+    # print("In decrypt_integer ", len(pub_key), len(pub_context), len(priv_key))
     enc = Pyfhel()
     enc.from_bytes_context(pub_context)
     enc.from_bytes_publicKey(pub_key)
     enc.from_bytes_secretKey(priv_key)
-    print("Constructed Pyfhel object")
+    # print("Constructed Pyfhel object")
 
-    def help(i):
+    def help(i) -> int:
         decoded_px = PyCtxt()
         decoded_px.from_bytes(pixels[i], "int")
-        return enc.decryptInt(decoded_px)
+        decrypted_int = enc.decryptInt(decoded_px)
+        # return min(int(math.sqrt(decrypted_int)), 255)
+        return min(decrypted_int // 2, 255)
 
     result = list(map(help, range(start, start + chunksize)))
     return result
 
 
 @time_me
-def decrypt_image(enc: Pyfhel, encrypted_pixels):
+def decrypt_image(enc: Pyfhel, encrypted_pixels) -> list[int]:
     length = len(encrypted_pixels)
     manual_chunk = 128
     with Pool() as p:
-        pixels = p.map(
+        pixel_chunks = p.map(
             partial(
                 decrypt_integer_chunk,
                 enc.to_bytes_publicKey(),
@@ -101,6 +104,10 @@ def decrypt_image(enc: Pyfhel, encrypted_pixels):
             ),
             range(0, length, manual_chunk),
         )
+    pixels: list[int] = []
+    for chunk in pixel_chunks:
+        pixels += chunk
+
     return pixels
 
 
