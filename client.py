@@ -36,7 +36,7 @@ def encrypt_integer_chunk(pub_key, pub_context, pixels, chunksize, start) -> lis
 
     def help(i) -> str:
         px = pixels[i]
-        encrypted_px = enc.encryptInt(px).to_bytes()
+        encrypted_px = enc.encryptFrac(px).to_bytes()
         return base64.b64encode(encrypted_px).decode("ascii")
 
     result = list(map(help, range(start, start + chunksize)))
@@ -46,7 +46,7 @@ def encrypt_integer_chunk(pub_key, pub_context, pixels, chunksize, start) -> lis
 
 @time_me
 def encrypt_image(enc: Pyfhel, im: Image) -> list[str]:
-    imdata = list(im.getdata())
+    imdata: list[float] = [x/255.0 for x in im.getdata()]
     manual_chunk = 128
     length = len(imdata)
     with Pool() as p:
@@ -79,10 +79,12 @@ def decrypt_integer_chunk(
 
     def help(i) -> int:
         decoded_px = PyCtxt()
-        decoded_px.from_bytes(pixels[i], "int")
-        decrypted_int = enc.decryptInt(decoded_px)
-        # return min(int(math.sqrt(decrypted_int)), 255)
-        return min(decrypted_int // 2, 255)
+        decoded_px.from_bytes(pixels[i][0], "float")
+        decrypted_x = enc.decryptFrac(decoded_px)
+        decoded_px.from_bytes(pixels[i][1], "float")
+        decrypted_y = enc.decryptFrac(decoded_px)
+        result = math.sqrt(decrypted_y*decrypted_y + decrypted_x*decrypted_x)
+        return min(int(result*255), 255)
 
     result = list(map(help, range(start, start + chunksize)))
     return result
@@ -159,7 +161,7 @@ def try_encrypted_edge_detection(im: Image):
     enc.keyGen()
     response = send_encrypted_request(enc, im)
     body = response.json()
-    pixel_bytes = list(map(lambda px: base64.b64decode(px), body["pixels"]))
+    pixel_bytes = list(map(lambda px: (base64.b64decode(px[0]), base64.b64decode(px[1])), body["pixels"]))
 
     plaintext = decrypt_image(enc, pixel_bytes)
     save_result_image(im.size, plaintext)

@@ -63,20 +63,20 @@ def sobel_encrypted_edge_detect(
         y = i % W
         x = i // W
         cur_bytes = base64.b64decode(cur)
-        cipherobj = PyCtxt(pyfhel=enc, serialized=cur_bytes, encoding="int")
+        cipherobj = PyCtxt(pyfhel=enc, serialized=cur_bytes, encoding="float")
         results.append(cipherobj)
 
     def cipher_to_str(cipher):
         return base64.b64encode(cipher.to_bytes()).decode("ascii")
 
-    zero = enc.encryptInt(0)
+    zero = enc.encryptFrac(0)
     zero_out = cipher_to_str(zero)
     edged = []
     for i in range(len(results)):
         y = i % W
         x = i // W
         if x in [0, W - 1] or y in [0, W - 1]:
-            edged.append(zero_out)
+            edged.append([zero_out, zero_out])
             continue
 
         # Order:
@@ -104,7 +104,7 @@ def sobel_encrypted_edge_detect(
             - results[i - W + 1]
         )
 
-        edged.append(cipher_to_str(valx * valx))
+        edged.append([cipher_to_str(valx), cipher_to_str(valy)])
 
     return edged
 
